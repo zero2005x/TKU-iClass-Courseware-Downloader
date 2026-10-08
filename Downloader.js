@@ -1,28 +1,159 @@
 // ==UserScript==
-// @name         TKU iClass Downloader
-// @namespace    TKU.iClass 
-// @version      2.3.4-TKU
+// @name         TKU iClass Downloader v3
+// @namespace    zero2005x.TKU.iClass
+// @version      3.0.0
 // @license      MIT
-// @description  Download Tronclass Courseware
-// @author       Hs0 (Forked from NCJ)
-// @match        *://iclass.tku.edu.tw/course/*/courseware
+// @description  Download TronClass Courseware + Activity attachments (bulk) + PDF.js iframe force-save + Video
+// @author       zero2005x (Forked from Hs0, originally NCJ)
+// @match        *://iclass.tku.edu.tw/course/*/courseware*
+// @match        *://iclass.tku.edu.tw/*activity*
+// @match        *://iclass.tku.edu.tw/*
 // @grant        none
 // @require      https://cdn.bootcss.com/jquery/3.5.0/jquery.min.js
 // ==/UserScript==
-  
-$(document).bind('DOMSubtreeModified', function() {
-    if ($('#Tronclass_Downloader').length == 0 && $('#file-previewer-with-note > div > div > div.header.clearfix').length) {
-        $('#file-previewer-with-note > div > div > div.header.clearfix').append('<input type="button" value="強制下載" id="Tronclass_Downloader">');
-        $("#Tronclass_Downloader").css("position", "relative").css("left", 10);
-        $('#Tronclass_Downloader').click(function(){
-            window.open(decodeURIComponent(document.getElementById('pdf-viewer').src.split("?file=")[1]));
+
+/* v3.0 merge notes:
+ * - Keeps v2.3.4-TKU logic: old courseware pdf-viewer window.open + video <a> links.
+ * - Adds Snippet A (verified): bulk-download activity uploads via /api/activities/{id} + <a download>.
+ *   Source: location.hash -> activityId -> fetch uploads -> forEach create <a href=/api/uploads/{id}/blob>.
+ * - Adds Snippet B (verified): force-save PDF.js iframe via contentWindow.PDFViewerApplication.downloadOrSave()
+ *   fallback to iframe.contentDocument.querySelector('#download').click().
+ * - No credentials are stored. Runs with your logged-in session (same-origin cookies).
+ */
+
+(function () {
+    'use strict';
+
+    // ---------- Snippet A: bulk activity attachments ----------
+    async function downloadAllActivityUploads() {
+        const activityId = location.hash.split('/').pop().replace(/\D/g, '');
+        if (!activityId) {
+            alert('[v3] 無法取得活動 ID，請先打開課程活動頁 (#/activity/...)');
+            console.error('[v3] 無法取得活動 ID, hash=', location.hash);
+            return;
+        }
+        try {
+            const res = await fetch(`/api/activities/${activityId}`);
+            if (!res.ok) {
+                alert(`[v3] API 回傳 ${res.status}，請重新整理/重新登入後再試`);
+                return;
+            }
+            const data = await res.json();
+            const uploads = data.uploads || [];
+            if (!uploads.length) {
+                alert('[v3] 未找到附件資料 (uploads 為空)');
+                console.error('[v3] 未找到附件資料', data);
+                return;
+            }
+            uploads.forEach((file) => {
+                const downloadUrl = `/api/uploads/${file.id}/blob`;
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = file.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                console.log(`[v3] ✅ 開始下載原始檔案：${file.name}`);
+            });
+            alert(`[v3] 已觸發 ${uploads.length} 個檔案下載，若被擋請按網址列「允許多個檔案下載」`);
+        } catch (e) {
+            console.error('[v3] bulk download failed', e);
+            alert('[v3] 下載失敗，請開 F12 Console 看錯誤');
+        }
+    }
+
+    // ---------- Snippet B: PDF.js iframe force-save ----------
+    function forceSavePdfIframe() {
+        // 1) Try new verified path: PDF.js viewer API inside iframe
+        try {
+            const iframe = document.querySelector('iframe');
+            const viewerApp = iframe?.contentWindow?.PDFViewerApplication;
+            if (viewerApp && typeof viewerApp.downloadOrSave === 'function') {
+                viewerApp.downloadOrSave();
+                console.log('[v3] ✅ via PDFViewerApplication.downloadOrSave()');
+                return true;
+            }
+            const innerBtn = iframe?.contentDocument?.querySelector('#download');
+            if (innerBtn) {
+                innerBtn.click();
+                console.log('[v3] ✅ via iframe #download click');
+                return true;
+            }
+        } catch (e) {
+            console.warn('[v3] iframe access blocked or failed, fallback to legacy', e);
+        }
+        // 2) Legacy v2 path: pdf-viewer ?file= direct open (same-origin old courseware page)
+        try {
+            const pv = document.getElementById('pdf-viewer');
+            if (pv && pv.src && pv.src.includes('?file=')) {
+                window.open(decodeURIComponent(pv.src.split('?file=')[1]));
+                console.log('[v3] ✅ via legacy pdf-viewer ?file= open');
+                return true;
+            }
+        } catch (e) {
+            console.error('[v3] legacy pdf open failed', e);
+        }
+        alert('[v3] 找不到可下載的 PDF (iframe 被跨域擋下或選擇器改變)');
+        return false;
+    }
+
+    function injectActivityButton() {
+        // Avoid duplicates. Inject into a stable header if present, else fixed floating button.
+        if (document.getElementById('Tronclass_Downloader_v3_all')) return;
+        const btn = document.createElement('input');
+        btn.type = 'button';
+        btn.value = '一鍵下載全部附件 (v3)';
+        btn.id = 'Tronclass_Downloader_v3_all';
+        btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9999;padding:8px 12px;cursor:pointer;';
+        btn.onclick = downloadAllActivityUploads;
+        // Only show on activity-like pages (hash contains activity) to reduce noise,
+        // but keep available globally since SPA hash changes without reload.
+        const show = /activity/i.test(location.hash) || /activity/i.test(location.href);
+        btn.style.display = show ? 'block' : 'none';
+        document.documentElement.appendChild(btn);
+        // Toggle visibility on hash change
+        window.addEventListener('hashchange', () => {
+            const s = /activity/i.test(location.hash) || /activity/i.test(location.href);
+            btn.style.display = s ? 'block' : 'none';
         });
     }
 
-    if ($('#Tronclass_Downloader_video').length == 0 && $('video').length && $('video')[0].children.length == 3 && $('video')[0].children[0].getAttribute('src').indexOf('/api') == 0) {
-        var v=$('video')[0];
-        for (var i of v.children) {
-            $(v.parentNode.parentNode).prepend(`<a href="${i.getAttribute('src')}" id="Tronclass_Downloader_video">\t${i.getAttribute('label')}\t</a>`);
+    // ---------- Legacy v2.3.4 logic (kept) ----------
+    function legacyCoursewareEnhance() {
+        // Original: pdf 強制下載 button on old courseware preview header
+        if (window.$ && $('#Tronclass_Downloader').length === 0 && $('#file-previewer-with-note > div > div > div.header.clearfix').length) {
+            $('#file-previewer-with-note > div > div > div.header.clearfix').append('<input type="button" value="強制下載" id="Tronclass_Downloader">');
+            $('#Tronclass_Downloader').css('position', 'relative').css('left', 10);
+            $('#Tronclass_Downloader').click(function () {
+                // v3: prefer iframe API first, then legacy open
+                if (!forceSavePdfIframe()) {
+                    try {
+                        window.open(decodeURIComponent(document.getElementById('pdf-viewer').src.split('?file=')[1]));
+                    } catch (e) { console.error('[v3 legacy] open failed', e); }
+                }
+            });
+        }
+        // Original: video direct links
+        if (window.$ && $('#Tronclass_Downloader_video').length === 0 && $('video').length && $('video')[0].children.length === 3 && $('video')[0].children[0].getAttribute('src').indexOf('/api') === 0) {
+            var v = $('video')[0];
+            for (var i of v.children) {
+                $(v.parentNode.parentNode).prepend(`<a href="${i.getAttribute('src')}" id="Tronclass_Downloader_video">\t${i.getAttribute('label')}\t</a>`);
+            }
         }
     }
-});
+
+    // Replace deprecated DOMSubtreeModified with interval + MutationObserver-friendly polling.
+    // Keeps behavior identical but avoids performance warning.
+    setInterval(() => {
+        try {
+            injectActivityButton();
+            legacyCoursewareEnhance();
+        } catch (e) {
+            console.error('[v3] enhancer error', e);
+        }
+    }, 1500);
+
+    // Expose for Console manual use (matches explain.md snippets)
+    window.TKU_DownloaderV3 = { downloadAllActivityUploads, forceSavePdfIframe };
+    console.log('[v3] TKU iClass Downloader loaded. Use window.TKU_DownloaderV3.downloadAllActivityUploads() or click floating button.');
+})();

@@ -1,0 +1,5 @@
+# never commit credentials
+acc_password.txt
+*password*.txt
+*acc*.txt
+.env
