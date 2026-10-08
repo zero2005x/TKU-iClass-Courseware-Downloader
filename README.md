@@ -1,12 +1,23 @@
-# TKU iClass Courseware Downloader v3 (fork by zero2005x)
+# TKU iClass Courseware Downloader v3.0.3 (fork by zero2005x)
 
 Download TKU iClass Courseware && Course Video — 一鍵下載淡江大學 iClass 中的教材與影片
 
 Forked from [Hs0/TKU-iClass-Courseware-Downloader](https://github.com/Hs0/TKU-iClass-Courseware-Downloader), originally [iamNCJ/ZJU-Tronclass-Courseware-Downloader](https://github.com/iamNCJ/ZJU-Tronclass-Courseware-Downloader).
+License: MIT — see [LICENSE](LICENSE).
 
-## What's new in v3.0.0
+## What's new (v3.0.3, current)
 
-Keeps v2.3.4-TKU (`courseware` + video) and adds 2 verified Console snippets as Tampermonkey buttons:
+- Zero dependencies (dropped `@require` jQuery — it could block the whole script when the CDN failed).
+- Bulk download: 350ms throttle between files + filename sanitization + `uploads -> attachments -> resources -> materials -> files` fallback chain.
+- Video links: per-video guard (one video no longer blocks others) + safe container via `closest()` fallback.
+- Scheduler: `MutationObserver` (debounced) + `hashchange` instead of a permanent 1.5s timer.
+- Single `@match *://iclass.tku.edu.tw/*` (Tampermonkey ignores URL hash, so `#/activity/...` needs the wildcard).
+
+## History
+
+- v3.0.2: vanilla legacy UI, robust `getActivityId()`, removed `@require`.
+- v3.0.1: `@match` cleanup, relaxed video selectors.
+- v3.0.0: kept v2.3.4-TKU (`courseware` + video), added verified Console snippets as buttons:
 
 1. **Bulk activity attachments (Snippet A)**
    - `location.hash` → `activityId` → `fetch /api/activities/{id}` → `uploads[]` → `<a href=/api/uploads/{id}/blob download=file.name>` loop
@@ -18,10 +29,9 @@ Keeps v2.3.4-TKU (`courseware` + video) and adds 2 verified Console snippets as 
    - Old `強制下載` button now tries iframe API first
    - Or Console: `window.TKU_DownloaderV3.forceSavePdfIframe()`
 
-3. **Tech changes**
-   - Added `@match` for `*activity*` SPA pages
-   - Replaced deprecated `DOMSubtreeModified` with 1.5s polling (same selectors)
-   - No credentials stored; uses logged-in same-origin cookies
+3. **Tech changes (v3.0.x)**
+   - Single site-wide `@match` (hash-aware routing handled at runtime via `getActivityId()`)
+   - `MutationObserver` scheduler; no credentials stored, uses logged-in same-origin cookies
 
 ## 適用範圍
 
