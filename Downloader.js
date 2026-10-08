@@ -1,21 +1,25 @@
 // ==UserScript==
 // @name         TKU iClass Downloader v3
 // @namespace    zero2005x.TKU.iClass
-// @version      3.0.1
+// @version      3.0.2
 // @license      MIT
 // @description  Download TronClass Courseware + Activity attachments (bulk) + PDF.js iframe force-save + Video
 // @author       zero2005x (Forked from Hs0, originally NCJ)
 // @match        *://iclass.tku.edu.tw/course/*/courseware*
 // @match        *://iclass.tku.edu.tw/*
 // @grant        none
-// @require      https://code.jquery.com/jquery-3.5.1.min.js
 // ==/UserScript==
 
-/* v3.0.1 merge notes (fixes external review):
- * - jQuery CDN: bootcss -> code.jquery.com (bootcss unreliable; legacy btn/video need window.$).
+/* v3.0.2 merge notes (fixes window.TKU_DownloaderV3 undefined):
+ * - Root cause: @require jQuery blocked whole userscript when CDN failed -> core never ran.
+ *   Fix: drop @require entirely. Core (bulk + pdf) is now 100% vanilla. Legacy UI uses vanilla
+ *   querySelector with optional jQuery if present, never required.
+ * - If you see "Cannot read properties of undefined (reading 'downloadAllActivityUploads')",
+ *   it means the userscript isn't installed/active on this page. Use the standalone Console
+ *   snippet below (no install needed).
+ * v3.0.1 notes:
  * - @match: removed redundant *activity* line. NOTE: Tampermonkey @match ignores URL hash,
  *   so #/activity/... SPA routes can only be covered by *://iclass.tku.edu.tw/*.
- *   Activity detection is done at runtime via location.hash (see getActivityId).
  * - Keeps v2.3.4-TKU logic: old courseware pdf-viewer window.open + video <a> links.
  * - Adds Snippet A (verified): bulk-download activity uploads via /api/activities/{id} + <a download>.
  *   Source: location.hash -> activityId -> fetch uploads -> forEach create <a href=/api/uploads/{id}/blob>.
@@ -138,31 +142,41 @@
         });
     }
 
-    // ---------- Legacy v2.3.4 logic (kept, selectors relaxed) ----------
+    // ---------- Legacy v2.3.4 logic (kept, selectors relaxed, vanilla, jQuery optional) ----------
     function legacyCoursewareEnhance() {
         // Skip heavy DOM work when tab hidden (reduces 1.5s polling cost)
         if (document.hidden) return;
-        // Original: pdf 強制下載 button on old courseware preview header
-        if (window.$ && $('#Tronclass_Downloader').length === 0 && $('#file-previewer-with-note > div > div > div.header.clearfix').length) {
-            $('#file-previewer-with-note > div > div > div.header.clearfix').append('<input type="button" value="強制下載" id="Tronclass_Downloader">');
-            $('#Tronclass_Downloader').css('position', 'relative').css('left', 10);
-            $('#Tronclass_Downloader').click(function () {
-                // v3: prefer iframe API first, then legacy open
-                if (!forceSavePdfIframe()) {
-                    try {
-                        window.open(decodeURIComponent(document.getElementById('pdf-viewer').src.split('?file=')[1]));
-                    } catch (e) { console.error('[v3 legacy] open failed', e); }
-                }
-            });
+        const hasJq = typeof window.$ === 'function' && window.$.fn;
+        // Original: pdf 強制下載 button on old courseware preview header (vanilla, no jQuery needed)
+        if (!document.getElementById('Tronclass_Downloader')) {
+            const header = document.querySelector('#file-previewer-with-note > div > div > div.header.clearfix');
+            if (header) {
+                const btn = document.createElement('input');
+                btn.type = 'button';
+                btn.value = '強制下載';
+                btn.id = 'Tronclass_Downloader';
+                btn.style.position = 'relative';
+                btn.style.left = '10px';
+                btn.addEventListener('click', () => {
+                    // v3: prefer iframe API first, then legacy open
+                    if (!forceSavePdfIframe()) {
+                        try {
+                            window.open(decodeURIComponent(document.getElementById('pdf-viewer').src.split('?file=')[1]));
+                        } catch (e) { console.error('[v3 legacy] open failed', e); }
+                    }
+                });
+                header.appendChild(btn);
+            }
         }
-        // Relaxed video detection (old code required exactly 3 children; page layout may have changed).
-        // Now: any <video> with <source src="/api...">, or video src itself starting with /api.
-        if (window.$ && $('#Tronclass_Downloader_video').length === 0 && $('.Tronclass_Downloader_video').length === 0 && $('video').length) {
-            const videos = $('video').toArray();
+        // Relaxed video detection, vanilla version (old code required jQuery + exactly 3 children).
+        if (document.getElementById('Tronclass_Downloader_video') === null && document.querySelector('.Tronclass_Downloader_video') === null) {
+            const videos = Array.from(document.querySelectorAll('video'));
+            if (videos.length) {
             for (const v of videos) {
                 const srcs = [];
-                if (v.getAttribute('src') && v.getAttribute('src').indexOf('/api') === 0) {
-                    srcs.push({ src: v.getAttribute('src'), label: v.getAttribute('label') || 'video' });
+                const vSrc = v.getAttribute('src');
+                if (vSrc && vSrc.indexOf('/api') === 0) {
+                    srcs.push({ src: vSrc, label: v.getAttribute('label') || 'video' });
                 }
                 for (const s of v.children) {
                     const src = s.getAttribute && s.getAttribute('src');
@@ -170,24 +184,35 @@
                         srcs.push({ src, label: s.getAttribute('label') || 'video' });
                     }
                 }
-                // Keep old behavior as fallback: if no /api src found but children look like sources, skip.
                 for (const { src, label } of srcs) {
-                    $(v.parentNode.parentNode).prepend(`<a href="${src}" class="Tronclass_Downloader_video">\t${label}\t</a>`);
+                    const a = document.createElement('a');
+                    a.href = src;
+                    a.className = 'Tronclass_Downloader_video';
+                    a.textContent = `\t${label}\t`;
+                    v.parentNode.parentNode.prepend(a);
                 }
-                // Mark done even if zero found for this video to avoid re-scanning every tick
                 if (!v.dataset.tronclassScanned) v.dataset.tronclassScanned = '1';
             }
-            // Back-compat: old id-based check (only first match used id, now class to allow multiples)
-            if ($('.Tronclass_Downloader_video').length === 0) {
-                // Fall through to strict legacy check for 2020 layout
-                const v0 = $('video')[0];
-                if (v0 && v0.children.length === 3 && v0.children[0].getAttribute('src') && v0.children[0].getAttribute('src').indexOf('/api') === 0) {
-                    for (const i of v0.children) {
-                        $(v0.parentNode.parentNode).prepend(`<a href="${i.getAttribute('src')}" class="Tronclass_Downloader_video">\t${i.getAttribute('label')}\t</a>`);
+            // Back-compat strict 2020 layout (vanilla)
+            if (document.querySelector('.Tronclass_Downloader_video') === null) {
+                const v0 = document.querySelector('video');
+                if (v0 && v0.children.length === 3) {
+                    const s0 = v0.children[0].getAttribute && v0.children[0].getAttribute('src');
+                    if (s0 && s0.indexOf('/api') === 0) {
+                    for (const el of v0.children) {
+                        const a = document.createElement('a');
+                        a.href = el.getAttribute('src');
+                        a.className = 'Tronclass_Downloader_video';
+                        a.textContent = `\t${el.getAttribute('label')}\t`;
+                        v0.parentNode.parentNode.prepend(a);
+                    }
                     }
                 }
             }
+            }
         }
+        // Optional jQuery path kept only for back-compat if page already has it; never required.
+        if (hasJq) { /* no-op: vanilla above already handled it */ }
     }
 
     // Replace deprecated DOMSubtreeModified with interval + MutationObserver-friendly polling.
