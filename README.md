@@ -6,7 +6,7 @@ Forked from [Hs0/TKU-iClass-Courseware-Downloader](https://github.com/Hs0/TKU-iC
 
 ## What's new in v3.0.0
 
-Keeps v2.3.4-TKU (`courseware` + video) and adds 2 verified Console snippets as8799780600 Tampermonkey buttons:
+Keeps v2.3.4-TKU (`courseware` + video) and adds 2 verified Console snippets as Tampermonkey buttons:
 
 1. **Bulk activity attachments (Snippet A)**
    - `location.hash` → `activityId` → `fetch /api/activities/{id}` → `uploads[]` → `<a href=/api/uploads/{id}/blob download=file.name>` loop
